@@ -19,17 +19,14 @@ function VNPayCallbackContent() {
                 const queryString = window.location.search;
 
                 // Gọi API backend để verify chữ ký (checksum) và cập nhật trạng thái đơn hàng
-                const response = await fetch(`http://localhost:8080/api/v1/orders/vnpay-callback${queryString}`, {
+                const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+                const response = await fetch(`${apiUrl}/api/v1/orders/vnpay-callback${queryString}`, {
                     method: 'GET',
                     credentials: 'include', // Sử dụng cookie nếu backend yêu cầu định danh
                 });
 
-                if (response.ok) {
-                    setIsSuccess(true);
-                } else {
-                    console.error("Lỗi từ server, status:", response.status);
-                    setIsSuccess(false);
-                }
+                const result = await response.json();
+                setIsSuccess(response.ok && result.success && result.data === 'SUCCESS');
             } catch (error) {
                 console.error("Lỗi xác thực thanh toán:", error);
                 setIsSuccess(false);
@@ -40,6 +37,8 @@ function VNPayCallbackContent() {
 
         if (searchParams.toString()) {
             verifyPaymentWithBackend();
+        } else {
+            setLoading(false);
         }
     }, [searchParams]);
 

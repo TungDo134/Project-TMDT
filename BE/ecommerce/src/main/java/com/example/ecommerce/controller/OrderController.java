@@ -3,20 +3,12 @@ package com.example.ecommerce.controller;
 import com.example.ecommerce.dto.request.auth.CheckoutRequest;
 import com.example.ecommerce.dto.response.ApiResponse;
 import com.example.ecommerce.dto.response.OrderResponse;
-import com.example.ecommerce.entity.Order;
-import com.example.ecommerce.entity.Payment;
-import com.example.ecommerce.enums.OrderStatus;
 import com.example.ecommerce.enums.PaymentMethod;
-import com.example.ecommerce.enums.PaymentStatus;
-import com.example.ecommerce.exception.AppException;
-import com.example.ecommerce.exception.ErrorCode;
-import com.example.ecommerce.repository.OrderRepository;
-import com.example.ecommerce.repository.PaymentRepository;
 import com.example.ecommerce.service.OrderService;
 import com.example.ecommerce.service.VNPayService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -24,7 +16,6 @@ import java.security.Principal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/v1/orders")
@@ -34,8 +25,6 @@ public class OrderController {
 
     private final OrderService orderService;
     private final VNPayService vnPayService;
-    private final OrderRepository orderRepository;
-    private final PaymentRepository paymentRepository;
 
     /**
      * 1. API ĐẶT HÀNG (Checkout)
@@ -43,29 +32,24 @@ public class OrderController {
     @PostMapping("/checkout")
     public ResponseEntity<ApiResponse<OrderResponse>> checkout(
             Principal principal,
-            @RequestBody CheckoutRequest request,
+            @Valid @RequestBody CheckoutRequest request,
             HttpServletRequest httpRequest) {
 
-        try {
-            String userId = principal.getName();
-            OrderResponse order = orderService.checkout(userId, request);
+        String userId = principal.getName();
+        OrderResponse order = orderService.checkout(userId, request);
 
-            // Nếu thanh toán ONLINE qua VNPay, tạo URL thanh toán
-            if (request.getPaymentMethod() == PaymentMethod.ONLINE) {
-                String ipAddress = httpRequest.getRemoteAddr();
-                String paymentUrl = vnPayService.createPaymentUrl(order.getId(), ipAddress);
-                order.setPaymentUrl(paymentUrl);
-            }
-
-            return ResponseEntity.ok(ApiResponse.<OrderResponse>builder()
-                    .success(true)
-                    .code("ORDER_CREATED")
-                    .message("Đặt hàng thành công")
-                    .data(order)
-                    .build());
-        } catch (AppException e) {
-            throw e;
+        if (request.getPaymentMethod() == PaymentMethod.ONLINE) {
+            String ipAddress = httpRequest.getRemoteAddr();
+            String paymentUrl = vnPayService.createPaymentUrl(order.getId(), ipAddress);
+            order.setPaymentUrl(paymentUrl);
         }
+
+        return ResponseEntity.ok(ApiResponse.<OrderResponse>builder()
+                .success(true)
+                .code("ORDER_CREATED")
+                .message("Đặt hàng thành công")
+                .data(order)
+                .build());
     }
 
     /**
@@ -78,22 +62,23 @@ public class OrderController {
             Map<String, String> params = new HashMap<>();
             request.getParameterMap().forEach((k, v) -> params.put(k, v[0]));
 
-            // Xử lý callback (Bạn đã ép luôn thành công trong VNPayService)
-            vnPayService.processCallback(params);
+            boolean paymentSucceeded = vnPayService.processCallback(params);
 
             return ResponseEntity.ok(ApiResponse.<String>builder()
                     .success(true)
                     .code("PAYMENT_VERIFIED")
-                    .message("Xác thực thanh toán thành công")
+                    .message(paymentSucceeded
+                            ? "Thanh toán thành công"
+                            : "Giao dịch thanh toán không thành công")
+                    .data(paymentSucceeded ? "SUCCESS" : "FAILED")
                     .build());
 
-        } catch (Exception e) {
-            System.err.println("Lỗi xử lý callback VNPay: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest()
                     .body(ApiResponse.<String>builder()
                             .success(false)
-                            .code("PAYMENT_FAILED")
-                            .message("Lỗi xử lý thanh toán: " + e.getMessage())
+                            .code("INVALID_PAYMENT_CALLBACK")
+                            .message("Callback thanh toán không hợp lệ")
                             .build());
         }
     }

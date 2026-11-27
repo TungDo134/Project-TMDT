@@ -5,6 +5,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -19,6 +21,28 @@ public class GlobalExceptionHandler {
                                                 .success(false)
                                                 .code(errorCode.name())
                                                 .message(errorCode.getMessage())
+                                                .build());
+        }
+
+        @ExceptionHandler(MethodArgumentNotValidException.class)
+        public ResponseEntity<ApiResponse<Void>> handleValidationException(MethodArgumentNotValidException ex) {
+                return ResponseEntity
+                                .status(ErrorCode.VALIDATION_ERROR.getStatus())
+                                .body(ApiResponse.<Void>builder()
+                                                .success(false)
+                                                .code(ErrorCode.VALIDATION_ERROR.name())
+                                                .message(ErrorCode.VALIDATION_ERROR.getMessage())
+                                                .build());
+        }
+
+        @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+        public ResponseEntity<ApiResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+                return ResponseEntity
+                                .status(ErrorCode.VALIDATION_ERROR.getStatus())
+                                .body(ApiResponse.<Void>builder()
+                                                .success(false)
+                                                .code(ErrorCode.VALIDATION_ERROR.name())
+                                                .message(ErrorCode.VALIDATION_ERROR.getMessage())
                                                 .build());
         }
 

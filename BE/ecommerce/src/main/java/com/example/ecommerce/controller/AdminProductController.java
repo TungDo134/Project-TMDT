@@ -5,6 +5,7 @@ import com.example.ecommerce.entity.Product;
 import com.example.ecommerce.repository.ProductRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.access.prepost.PreAuthorize;
 import tools.jackson.core.type.TypeReference;
 import tools.jackson.databind.ObjectMapper;
 
@@ -16,6 +17,7 @@ import java.util.Map;
 @RequestMapping("/api/admin/products")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminProductController {
 
         private final ProductRepository productRepository;

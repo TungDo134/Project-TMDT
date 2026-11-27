@@ -39,6 +39,7 @@ public enum ErrorCode {
 
     // ==== ORDER ====
     ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "Order not found"),
+    INVALID_STATUS_TRANSITION(HttpStatus.BAD_REQUEST, "Invalid order status transition"),
     PAYMENT_FAILED(HttpStatus.BAD_REQUEST, "Payment processing failed"),
 
     // ==== EMAIL VERIFICATION / PASSWORD RESET ====

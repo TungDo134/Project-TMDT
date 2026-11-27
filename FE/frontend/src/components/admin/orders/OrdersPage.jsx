@@ -75,13 +75,12 @@ async function parseResponse(res) {
 // Chuẩn hóa 1 order từ backend → UI (field names có thể khác nhau)
 function normalizeOrder(order) {
     const status = (order.status || "PENDING").toUpperCase();
-    const subtotal = order.totalAmount ?? order.total ?? 0;
-    const shippingFee = (subtotal === 0 || subtotal >= 5000000) ? 0 : 50000;
+    const totalAmount = order.totalAmount ?? order.total ?? 0;
     return {
         ...order,
         id: order.id || order.orderId,
         status,
-        totalAmount: subtotal + shippingFee,
+        totalAmount,
         receiverName: order.receiverName || order.customerName || "Khách hàng",
         receiverPhone: order.receiverPhone || order.phone || "—",
         shippingAddress: order.shippingAddress || order.address || "",
@@ -593,8 +592,11 @@ export default function OrdersPage() {
                                 </button>
 
                                 <div className="flex items-center gap-2">
-                                    {/* Hủy đơn — chỉ hiện khi chưa kết thúc */}
-                                    {selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "CANCELLED" && (
+                                    {/* Hủy đơn — chỉ hiện khi chưa kết thúc và chưa thanh toán */}
+                                    {selectedOrder.status !== "DELIVERED"
+                                        && selectedOrder.status !== "CANCELLED"
+                                        && selectedOrder.paymentStatus !== "PAID"
+                                        && selectedOrder.paymentStatus !== "REFUNDED" && (
                                         <button
                                             disabled={updating}
                                             onClick={() => handleUpdateStatus(selectedOrder.id, "CANCELLED")}

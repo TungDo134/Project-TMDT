@@ -50,12 +50,13 @@ public class AdminOrderController {
     @PutMapping("/{orderId}/status")
     public ResponseEntity<ApiResponse<OrderResponse>> updateOrderStatus(
             @PathVariable String orderId,
-            @RequestParam OrderStatus status
+            @RequestParam String status
     ) {
+        OrderResponse updated = adminOrderService.updateOrderStatus(orderId, status);
         return ResponseEntity.ok(ApiResponse.<OrderResponse>builder()
                 .success(true).code("ORDER_STATUS_UPDATED")
-                .message("Order status updated to " + status)
-                .data(adminOrderService.updateOrderStatus(orderId, status))
+                .message("Order status updated to " + updated.getStatus())
+                .data(updated)
                 .build());
     }
 }

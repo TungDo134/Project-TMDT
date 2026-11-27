@@ -25,9 +25,6 @@ function formatDate(dateStr) {
     }).format(new Date(dateStr));
 }
 
-const FREE_SHIP_THRESHOLD = 5_000_000;
-const SHIPPING_FEE        = 50_000;
-
 const ORDER_STATUS_CONFIG = {
     PENDING:   { label: "Chờ xác nhận",   color: "text-amber-600 bg-amber-50 border-amber-200",     icon: Clock },
     CONFIRMED: { label: "Đã xác nhận",    color: "text-blue-600 bg-blue-50 border-blue-200",        icon: BadgeCheck },
@@ -100,10 +97,14 @@ export default function OrderDetailPage() {
     const payStatus   = PAYMENT_STATUS_LABEL[order.paymentStatus];
     const totalItems  = order.items?.reduce((s, i) => s + i.quantity, 0) || 0;
 
-    // ── Tính phí ship đồng bộ với CheckoutPage ──
-    const subtotal    = order.totalAmount ?? 0;
-    const shippingFee = subtotal === 0 || subtotal >= FREE_SHIP_THRESHOLD ? 0 : SHIPPING_FEE;
-    const grandTotal  = subtotal + shippingFee;
+    // order.totalAmount đã là tổng backend gồm tiền hàng và phí vận chuyển.
+    // Không cộng phí vận chuyển lần nữa để tránh hiển thị sai tổng tiền.
+    const subtotal = (order.items || []).reduce((sum, item) => {
+        const itemSubtotal = item.subtotal ?? (item.unitPrice ?? 0) * (item.quantity ?? 0);
+        return sum + Number(itemSubtotal || 0);
+    }, 0);
+    const grandTotal = order.totalAmount ?? subtotal;
+    const shippingFee = Math.max(0, Number(grandTotal) - subtotal);
 
     return (
         <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pb-12">

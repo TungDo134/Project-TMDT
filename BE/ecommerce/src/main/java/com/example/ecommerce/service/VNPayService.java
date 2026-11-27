@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.net.URLEncoder;
+import java.security.MessageDigest;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.time.Instant;
@@ -69,65 +70,92 @@ public class VNPayService {
         String vnp_ExpireDate = formatter.format(cld.getTime());
         vnp_Params.put("vnp_ExpireDate", vnp_ExpireDate);
 
-        List<String> fieldNames = new ArrayList<>(vnp_Params.keySet());
-        Collections.sort(fieldNames);
-        StringBuilder hashData = new StringBuilder();
-        StringBuilder query = new StringBuilder();
-        Iterator<String> itr = fieldNames.iterator();
-        while (itr.hasNext()) {
-            String fieldName = itr.next();
-            String fieldValue = vnp_Params.get(fieldName);
-            if ((fieldValue != null) && (fieldValue.length() > 0)) {
-                hashData.append(fieldName);
-                hashData.append('=');
-                try {
-                    hashData.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII.toString()));
-                    query.append(URLEncoder.encode(fieldName, StandardCharsets.US_ASCII.toString()));
-                    query.append('=');
-                    query.append(URLEncoder.encode(fieldValue, StandardCharsets.US_ASCII.toString()));
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                if (itr.hasNext()) {
-                    query.append('&');
-                    hashData.append('&');
-                }
-            }
-        }
-        String queryUrl = query.toString();
-        String vnp_SecureHash = hmacSHA512(vnPayConfig.getHashSecret(), hashData.toString());
+        String queryUrl = vnp_Params.entrySet().stream()
+                .filter(entry -> entry.getValue() != null && !entry.getValue().isEmpty())
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> encode(entry.getKey()) + "=" + encode(entry.getValue()))
+                .reduce((first, second) -> first + "&" + second)
+                .orElseThrow();
+        String vnp_SecureHash = sign(vnp_Params);
         queryUrl += "&vnp_SecureHash=" + vnp_SecureHash;
 
         return vnPayConfig.getPaymentUrl() + "?" + queryUrl;
     }
 
     @Transactional
-    public void processCallback(Map<String, String> fields) {
+    public boolean processCallback(Map<String, String> fields) {
+        String secureHash = fields.get("vnp_SecureHash");
+        if (secureHash == null || !secureHash.matches("(?i)[0-9a-f]{128}")
+                || !MessageDigest.isEqual(
+                        sign(fields).getBytes(StandardCharsets.US_ASCII),
+                        secureHash.toLowerCase(Locale.ROOT).getBytes(StandardCharsets.US_ASCII))) {
+            throw new IllegalArgumentException("Invalid VNPay signature");
+        }
+        if (vnPayConfig.getTmnCode() == null || vnPayConfig.getTmnCode().isBlank()) {
+            throw new IllegalStateException("VNPay terminal code is not configured");
+        }
+
+        String txnRef = fields.get("vnp_TxnRef");
+        if (txnRef == null || txnRef.isBlank()) {
+            throw new IllegalArgumentException("Missing VNPay transaction reference");
+        }
+
+        Payment payment = paymentRepository.findByTransactionId(txnRef)
+                .orElseThrow(() -> new IllegalArgumentException("Unknown VNPay transaction reference"));
+        if (payment.getGateway() != PaymentGateway.VNPAY) {
+            throw new IllegalArgumentException("Unexpected payment gateway");
+        }
+
+        long callbackAmount;
         try {
-            fields.remove("vnp_SecureHashType");
-            fields.remove("vnp_SecureHash");
+            callbackAmount = Long.parseLong(fields.get("vnp_Amount"));
+        } catch (NumberFormatException | NullPointerException e) {
+            throw new IllegalArgumentException("Invalid VNPay amount", e);
+        }
+        long expectedAmount = Math.round(payment.getAmount() * 100);
+        if (callbackAmount != expectedAmount
+                || !Objects.equals(vnPayConfig.getTmnCode(), fields.get("vnp_TmnCode"))) {
+            throw new IllegalArgumentException("VNPay payment details do not match");
+        }
 
-            String txnRef = fields.get("vnp_TxnRef");
+        Order order = orderRepository.findByIdForUpdate(payment.getOrder().getId())
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+        if (payment.getResult() == PaymentResult.SUCCESS
+                && order.getPaymentStatus() == PaymentStatus.PAID) {
+            return true;
+        }
+        if (order.getStatus() == OrderStatus.CANCELLED
+                || order.getStatus() == OrderStatus.DELIVERED) {
+            return false;
+        }
 
-            Payment payment = paymentRepository.findByTransactionId(txnRef)
-                    .orElseThrow(() -> new RuntimeException("PAYMENT_NOT_FOUND"));
+        payment.setGatewayTransactionNo(fields.get("vnp_TransactionNo"));
+        boolean paymentSucceeded = "00".equals(fields.get("vnp_ResponseCode"))
+                && "00".equals(fields.get("vnp_TransactionStatus"));
 
-            Order order = payment.getOrder();
-            payment.setGatewayTransactionNo(fields.get("vnp_TransactionNo"));
-
-            // ✅ Luôn xử lý thành công, bỏ qua vnp_ResponseCode
+        if (paymentSucceeded) {
+            if (payment.getGatewayTransactionNo() == null
+                    || payment.getGatewayTransactionNo().isBlank()) {
+                throw new IllegalArgumentException("Missing VNPay gateway transaction number");
+            }
             order.setPaymentStatus(PaymentStatus.PAID);
-            order.setStatus(OrderStatus.CONFIRMED);
+            if (order.getStatus() == OrderStatus.PENDING) {
+                order.setStatus(OrderStatus.CONFIRMED);
+            }
             payment.setResult(PaymentResult.SUCCESS);
             payment.setPaidAt(Instant.now());
             cartItemRepository.deleteByUserId(order.getUser().getId());
-
-            orderRepository.save(order);
-            paymentRepository.save(payment);
-
-        } catch (Exception e) {
-            throw new RuntimeException("Loi callback VNPay: " + e.getMessage(), e);
+        } else {
+            order.setPaymentStatus(PaymentStatus.FAILED);
+            payment.setResult("24".equals(fields.get("vnp_ResponseCode"))
+                    ? PaymentResult.CANCELLED
+                    : PaymentResult.FAILED);
+            releaseAuctionCheckout(order);
         }
+
+        orderRepository.save(order);
+        paymentRepository.save(payment);
+        return paymentSucceeded;
     }
 
     private void saveOrUpdatePayment(Order order, String txnRef, String orderId) {
@@ -138,8 +166,37 @@ public class VNPayService {
                         .gateway(PaymentGateway.VNPAY)
                         .build());
         payment.setTransactionId(txnRef);
+        payment.setAmount(order.getTotalAmount());
         payment.setResult(PaymentResult.PENDING);
         paymentRepository.save(payment);
+    }
+
+    private void releaseAuctionCheckout(Order order) {
+        for (var item : order.getItems()) {
+            if (Boolean.TRUE.equals(item.getProduct().getIsAuction())) {
+                item.getProduct().setAuctionPaid(false);
+            }
+        }
+    }
+
+    private String sign(Map<String, String> fields) {
+        if (vnPayConfig.getHashSecret() == null || vnPayConfig.getHashSecret().isBlank()) {
+            throw new IllegalStateException("VNPay hash secret is not configured");
+        }
+        String hashData = fields.entrySet().stream()
+                .filter(entry -> !"vnp_SecureHash".equals(entry.getKey())
+                        && !"vnp_SecureHashType".equals(entry.getKey())
+                        && entry.getValue() != null
+                        && !entry.getValue().isEmpty())
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> entry.getKey() + "=" + encode(entry.getValue()))
+                .reduce((first, second) -> first + "&" + second)
+                .orElse("");
+        return hmacSHA512(vnPayConfig.getHashSecret(), hashData);
+    }
+
+    private String encode(String value) {
+        return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
     private String hmacSHA512(String key, String data) {

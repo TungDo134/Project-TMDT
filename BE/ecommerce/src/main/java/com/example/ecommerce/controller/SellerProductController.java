@@ -7,6 +7,7 @@ import com.example.ecommerce.entity.User;
 import com.example.ecommerce.repository.ProductRepository;
 import com.example.ecommerce.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import jakarta.validation.Valid;
 import org.springframework.data.domain.Sort;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.jwt.Jwt;
@@ -48,7 +49,7 @@ public class SellerProductController {
     }
 
     @PostMapping("/create")
-    public SellerProductResponse createProduct(@RequestBody SellerProductResponse request) {
+    public SellerProductResponse createProduct(@Valid @RequestBody SellerProductResponse request) {
         Jwt jwt = (Jwt) SecurityContextHolder
                 .getContext()
                 .getAuthentication()
@@ -97,7 +98,7 @@ public class SellerProductController {
     @PutMapping("/update/{id}")
     public SellerProductResponse updateProduct(
             @PathVariable Long id,
-            @RequestBody SellerProductResponse request
+            @Valid @RequestBody SellerProductResponse request
     ) {
         Jwt jwt = (Jwt) SecurityContextHolder
                 .getContext()

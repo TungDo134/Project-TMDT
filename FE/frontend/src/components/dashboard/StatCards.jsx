@@ -63,15 +63,23 @@ export default function StatCards({ cards, isLoading }) {
             </div>
             
             <div className="flex items-center gap-2 mt-auto">
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                card.changeType === 'down' || (card.change && String(card.change).startsWith("-"))
-                  ? 'bg-red-100 text-red-700' 
-                  : 'bg-green-100 text-green-700'
-              }`}>
-                {card.changeType === 'down' || (card.change && String(card.change).startsWith("-")) ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
-                {card.change || "Thực tế"}
-              </span>
-              <span className="text-xs text-gray-400">vs kỳ trước</span>
+              {card.change ? (
+                <>
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                    card.changeType === 'down' || String(card.change).startsWith("-")
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-green-100 text-green-700'
+                  }`}>
+                    {card.changeType === 'down' || String(card.change).startsWith("-")
+                      ? <TrendingDown className="w-3 h-3" />
+                      : <TrendingUp className="w-3 h-3" />}
+                    {card.change}
+                  </span>
+                  <span className="text-xs text-gray-400">vs kỳ trước</span>
+                </>
+              ) : (
+                <span className="text-xs text-gray-500">Số liệu thực tế</span>
+              )}
             </div>
           </div>
         );

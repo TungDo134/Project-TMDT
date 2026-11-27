@@ -2,6 +2,9 @@ package com.example.ecommerce.dto.response;
 
 import com.example.ecommerce.enums.ProductStatus;
 import lombok.*;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.PositiveOrZero;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -15,6 +18,7 @@ import java.util.List;
 public class SellerProductResponse {
 
     private Long id;
+    @NotBlank
     private String name;
 
     private String imageUrl;
@@ -26,8 +30,12 @@ public class SellerProductResponse {
     private ProductStatus status;
 
     private String description;
+    @NotNull
+    @PositiveOrZero
     private Double price;
     private Integer soldQuantity;
+    @NotNull
+    @PositiveOrZero
     private Integer stockQuantity;
     private Boolean isAuction;
     private Boolean isDeleted;

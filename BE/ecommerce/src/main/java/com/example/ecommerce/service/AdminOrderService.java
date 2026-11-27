@@ -24,6 +24,7 @@ import java.util.Map;
 public class AdminOrderService {
 
     private final OrderRepository orderRepository;
+    private final OrderService orderService;
 
     @Transactional(readOnly = true)
     public List<OrderResponse> getAllOrders(String status) {
@@ -33,7 +34,7 @@ public class AdminOrderService {
                 OrderStatus orderStatus = OrderStatus.valueOf(status.toUpperCase());
                 orders = orderRepository.findAllByStatusOrderByCreatedAtDesc(orderStatus);
             } catch (IllegalArgumentException e) {
-                orders = orderRepository.findAllByOrderByCreatedAtDesc();
+                throw new AppException(ErrorCode.VALIDATION_ERROR);
             }
         } else {
             orders = orderRepository.findAllByOrderByCreatedAtDesc();
@@ -49,8 +50,19 @@ public class AdminOrderService {
     }
 
     @Transactional
-    public OrderResponse updateOrderStatus(String orderId, OrderStatus newStatus) {
-        Order order = orderRepository.findByIdWithItems(orderId)
+    public OrderResponse updateOrderStatus(String orderId, String status) {
+        final OrderStatus newStatus;
+        try {
+            newStatus = OrderStatus.valueOf(status == null ? "" : status.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new AppException(ErrorCode.VALIDATION_ERROR);
+        }
+
+        if (newStatus == OrderStatus.CANCELLED) {
+            return orderService.cancelOrderByAdmin(orderId);
+        }
+
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
 
         validateStatusTransition(order.getStatus(), newStatus);
@@ -63,18 +75,12 @@ public class AdminOrderService {
             order.setPaymentStatus(PaymentStatus.PAID);
         }
 
-        // CANCELLED + đã PAID → REFUNDED
-        if (newStatus == OrderStatus.CANCELLED
-                && order.getPaymentStatus() == PaymentStatus.PAID) {
-            order.setPaymentStatus(PaymentStatus.REFUNDED);
-        }
-
         return OrderResponse.from(orderRepository.save(order));
     }
 
     private void validateStatusTransition(OrderStatus current, OrderStatus next) {
         if (current == OrderStatus.DELIVERED || current == OrderStatus.CANCELLED) {
-            throw new AppException(ErrorCode.ORDER_NOT_FOUND); // dùng tạm, thêm INVALID_STATUS_TRANSITION vào ErrorCode nếu cần
+            throw new AppException(ErrorCode.INVALID_STATUS_TRANSITION);
         }
         Map<OrderStatus, Integer> stepMap = Map.of(
                 OrderStatus.PENDING,   0,
@@ -85,9 +91,8 @@ public class AdminOrderService {
         );
         Integer currentStep = stepMap.get(current);
         Integer nextStep    = stepMap.get(next);
-        if (currentStep == null || nextStep == null) return;
-        if (next != OrderStatus.CANCELLED && nextStep < currentStep) {
-            throw new AppException(ErrorCode.ORDER_NOT_FOUND);
+        if (currentStep == null || nextStep == null || nextStep != currentStep + 1) {
+            throw new AppException(ErrorCode.INVALID_STATUS_TRANSITION);
         }
     }
 

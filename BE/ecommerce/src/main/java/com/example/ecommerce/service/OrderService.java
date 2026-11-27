@@ -8,6 +8,7 @@ import com.example.ecommerce.entity.OrderItem;
 import com.example.ecommerce.entity.Product;
 import com.example.ecommerce.entity.User;
 import com.example.ecommerce.enums.OrderStatus;
+import com.example.ecommerce.enums.PaymentResult;
 import com.example.ecommerce.enums.PaymentMethod;
 import com.example.ecommerce.enums.PaymentStatus;
 import com.example.ecommerce.enums.ProductStatus;
@@ -16,6 +17,7 @@ import com.example.ecommerce.exception.ErrorCode;
 import com.example.ecommerce.repository.AuctionBidRepository;
 import com.example.ecommerce.repository.CartItemRepository;
 import com.example.ecommerce.repository.OrderRepository;
+import com.example.ecommerce.repository.PaymentRepository;
 import com.example.ecommerce.repository.ProductRepository;
 import com.example.ecommerce.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,10 @@ public class OrderService {
     private final UserRepository userRepository;
     private final AuctionBidRepository auctionBidRepository;
     private final CartItemRepository cartItemRepository;
+    private final PaymentRepository paymentRepository;
+
+    private static final double SHIPPING_FEE = 50_000.0;
+    private static final double FREE_SHIPPING_THRESHOLD = 5_000_000.0;
 
     @Transactional
     public OrderResponse checkout(String userId, CheckoutRequest request) {
@@ -57,15 +63,20 @@ public class OrderService {
         double totalAmount = 0;
 
         for (CheckoutRequest.OrderItemRequest itemRequest : request.getItems()) {
-            Product product = productRepository.findById(itemRequest.getProductId())
+            Product product = productRepository.findByIdForUpdate(itemRequest.getProductId())
                     .orElseThrow(() -> new AppException(ErrorCode.PRODUCT_NOT_FOUND));
+            if (Boolean.TRUE.equals(product.getIsDeleted())
+                    || !Boolean.TRUE.equals(product.getIsApproved())) {
+                throw new AppException(ErrorCode.VALIDATION_ERROR);
+            }
 
             double price = product.getPrice() != null ? product.getPrice() : 0.0;
 
             if (product.getIsAuction() != null && product.getIsAuction()) {
                 price = validateAndGetAuctionPrice(product, userId, itemRequest.getQuantity());
             } else {
-                if (product.getStockQuantity() != null && product.getStockQuantity() < itemRequest.getQuantity()) {
+                if (product.getStockQuantity() == null
+                        || product.getStockQuantity() < itemRequest.getQuantity()) {
                     throw new AppException(ErrorCode.VALIDATION_ERROR);
                 }
                 product.setStockQuantity(product.getStockQuantity() - itemRequest.getQuantity());
@@ -85,17 +96,12 @@ public class OrderService {
             order.getItems().add(orderItem);
         }
 
-        double shippingFee = 50000.0;
+        double shippingFee = totalAmount >= FREE_SHIPPING_THRESHOLD ? 0.0 : SHIPPING_FEE;
         order.setTotalAmount(totalAmount + shippingFee);
-        // ------------------------------------------------------------------
 
         Order savedOrder = orderRepository.save(order);
         if (!Boolean.TRUE.equals(request.getAuctionCheckout())) {
-            try {
-                cartItemRepository.deleteByUserId(userId);
-            } catch (Exception e) {
-                System.err.println("Lỗi khi xóa giỏ hàng sau checkout: " + e.getMessage());
-            }
+            cartItemRepository.deleteByUserId(userId);
         }
 
         return OrderResponse.from(savedOrder);
@@ -153,25 +159,48 @@ public class OrderService {
     }
     @Transactional
     public OrderResponse cancelOrder(String userId, String orderId) {
-        Order order = orderRepository.findByIdWithItems(orderId)
+        Order order = orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
 
         if (!order.getUser().getId().equals(userId)) {
             throw new AppException(ErrorCode.UNAUTHORIZED);
         }
 
+        return cancelOrder(order);
+    }
+
+    @Transactional
+    public OrderResponse cancelOrderByAdmin(String orderId) {
+        Order order = orderRepository.findByIdForUpdate(orderId)
+                .orElseThrow(() -> new AppException(ErrorCode.ORDER_NOT_FOUND));
+        return cancelOrder(order);
+    }
+
+    private OrderResponse cancelOrder(Order order) {
         if (order.getStatus() != OrderStatus.PENDING && order.getStatus() != OrderStatus.CONFIRMED) {
+            throw new AppException(ErrorCode.INVALID_STATUS_TRANSITION);
+        }
+        if (order.getPaymentStatus() == PaymentStatus.PAID) {
             throw new AppException(ErrorCode.VALIDATION_ERROR);
         }
 
-        // Hoàn lại stock
         for (OrderItem item : order.getItems()) {
             Product product = item.getProduct();
-            if (product.getStockQuantity() != null) {
+            if (Boolean.TRUE.equals(product.getIsAuction())) {
+                product.setAuctionPaid(false);
+                productRepository.save(product);
+            } else if (product.getStockQuantity() != null) {
                 product.setStockQuantity(product.getStockQuantity() + item.getQuantity());
                 productRepository.save(product);
             }
         }
+
+        paymentRepository.findByOrderId(order.getId()).ifPresent(payment -> {
+            if (payment.getResult() == PaymentResult.PENDING) {
+                payment.setResult(PaymentResult.CANCELLED);
+                paymentRepository.save(payment);
+            }
+        });
 
         order.setStatus(OrderStatus.CANCELLED);
         return OrderResponse.from(orderRepository.save(order));
